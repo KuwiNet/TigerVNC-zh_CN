@@ -79,19 +79,19 @@ jobs:
         if: steps.decide.outputs.need_update == 'true'
         run: |
           python3 -c "
-import polib
-pot = polib.pofile('po/tigervnc.pot')
-po  = polib.pofile('po/zh_CN.po')
-lu = {(e.msgctxt, e.msgid): e.msgstr for e in po if e.msgstr}
-missing = [e for e in pot if (e.msgctxt, e.msgid) not in lu]
-newt = '${{ steps.official.outputs.official_ver }}'
-print('== 对齐报告 (官方 tag v%s) ==' % newt)
-print('pot 条目总数      :', len(pot))
-print('复用旧翻译条数    :', len(pot) - len(missing))
-print('新增待翻译条数    :', len(missing))
-print('对齐方式: 以官方 pot 为准，旧翻译按 msgid 复用，新增条目由 DeepL 补译')
-print('版本一致性: pot 取自官方 v%s 源码树，与 exe 版本一致' % newt)
-"
+          import polib
+          pot = polib.pofile('po/tigervnc.pot')
+          po  = polib.pofile('po/zh_CN.po')
+          lu = {(e.msgctxt, e.msgid): e.msgstr for e in po if e.msgstr}
+          missing = [e for e in pot if (e.msgctxt, e.msgid) not in lu]
+          newt = '${{ steps.official.outputs.official_ver }}'
+          print('== 对齐报告 (官方 tag v%s) ==' % newt)
+          print('pot 条目总数      :', len(pot))
+          print('复用旧翻译条数    :', len(pot) - len(missing))
+          print('新增待翻译条数    :', len(missing))
+          print('对齐方式: 以官方 pot 为准，旧翻译按 msgid 复用，新增条目由 DeepL 补译')
+          print('版本一致性: pot 取自官方 v%s 源码树，与 exe 版本一致' % newt)
+          "
 
       - name: 生成新 .mo
         if: steps.decide.outputs.need_update == 'true'
