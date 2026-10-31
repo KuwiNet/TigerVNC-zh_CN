@@ -105,13 +105,19 @@ def main():
 
     # collect missing: msgid present in pot, missing or empty in po
     missing = []
+    reused = 0
     for e in pot:
         old = po_lookup.get((e.msgctxt, e.msgid))
         if old is None or not old.msgstr:
             missing.append(e)
+        else:
+            reused += 1
+    print("POT_ENTRIES", len(pot))
+    print("REUSED_OLD_TRANSLATIONS", reused)
     print("MISSING_ENTRIES", len(missing))
     if not missing:
         print("NOTHING_TO_TRANSLATE")
+        print("ALIGN_REPORT reused=%d new_translated=0" % reused)
         return
 
     # translate in batches of 40
@@ -152,6 +158,7 @@ def main():
     po.save(out_po, newline="\n")
     print("APPLIED", applied)
     print("OUT_PO", out_po)
+    print("ALIGN_REPORT reused=%d new_translated=%d" % (reused, applied))
     # print applied samples
     for (ctxt, msgid), trans in list(results.items())[:10]:
         print("  ", repr(msgid), "->", repr(trans))
