@@ -1,0 +1,139 @@
+name: Sync TigerVNC zh_CN locale
+
+on:
+  schedule:
+    # 每周一 02:00 UTC 检查一次官方是否有新版
+    - cron: '0 2 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 获取官方最新版本号
+        id: official
+        run: |
+          TAG=$(curl -s https://api.github.com/repos/TigerVNC/tigervnc/releases/latest | \
+            python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])")
+          echo "official_tag=$TAG"
+          echo "official_tag=$TAG" >> "$GITHUB_OUTPUT"
+          VER=${TAG#v}
+          echo "official_ver=$VER"
+          echo "official_ver=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: 获取本仓库最新 tag
+        id: local
+        run: |
+          LOCAL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/latest" | \
+            python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tag_name',''))" 2>/dev/null || echo "")
+          echo "local_tag=$LOCAL"
+          echo "local_tag=$LOCAL" >> "$GITHUB_OUTPUT"
+
+      - name: 判断是否需要更新
+        id: decide
+        run: |
+          OFFICIAL="${{ steps.official.outputs.official_tag }}"
+          LOCAL="${{ steps.local.outputs.local_tag }}"
+          echo "official=$OFFICIAL local=$LOCAL"
+          if [ -z "$OFFICIAL" ]; then echo "need_update=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if [ -z "$LOCAL" ] || [ "$OFFICIAL" != "$LOCAL" ]; then
+            echo "need_update=true" >> "$GITHUB_OUTPUT"
+            echo "NEW_VERSION_FOUND"
+          else
+            echo "need_update=false" >> "$GITHUB_OUTPUT"
+            echo "ALREADY_UP_TO_DATE"
+          fi
+
+      - name: 检出仓库（含历史 zh_CN.po）
+        if: steps.decide.outputs.need_update == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 下载官方新版 pot
+        if: steps.decide.outputs.need_update == 'true'
+        run: |
+          VER="${{ steps.official.outputs.official_ver }}"
+          TAG="${{ steps.official.outputs.official_tag }}"
+          curl -sL -o tigervnc_new.pot \
+            "https://raw.githubusercontent.com/TigerVNC/tigervnc/${TAG}/po/tigervnc.pot" || \
+          curl -sL -o tigervnc_new.pot \
+            "https://raw.githubusercontent.com/TigerVNC/tigervnc/v${VER}/po/tigervnc.pot"
+          ls -l tigervnc_new.pot
+          head -c 200 tigervnc_new.pot
+
+      - name: 安装 polib 并自动翻译新增字符串
+        if: steps.decide.outputs.need_update == 'true'
+        env:
+          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
+        run: |
+          pip install polib
+          python scripts/translate_missing.py tigervnc_new.pot po/zh_CN.po
+          mv tigervnc_new.pot po/tigervnc.pot
+
+      - name: 对齐报告
+        if: steps.decide.outputs.need_update == 'true'
+        run: |
+          python3 -c "
+import polib
+pot = polib.pofile('po/tigervnc.pot')
+po  = polib.pofile('po/zh_CN.po')
+lu = {(e.msgctxt, e.msgid): e.msgstr for e in po if e.msgstr}
+missing = [e for e in pot if (e.msgctxt, e.msgid) not in lu]
+newt = '${{ steps.official.outputs.official_ver }}'
+print('== 对齐报告 (官方 tag v%s) ==' % newt)
+print('pot 条目总数      :', len(pot))
+print('复用旧翻译条数    :', len(pot) - len(missing))
+print('新增待翻译条数    :', len(missing))
+print('对齐方式: 以官方 pot 为准，旧翻译按 msgid 复用，新增条目由 DeepL 补译')
+print('版本一致性: pot 取自官方 v%s 源码树，与 exe 版本一致' % newt)
+"
+
+      - name: 生成新 .mo
+        if: steps.decide.outputs.need_update == 'true'
+        run: |
+          python scripts/build_mo.py po/tigervnc.pot po/zh_CN.po locale/zh_CN/LC_MESSAGES/tigervnc.mo
+          # build_mo.py 还会在旁边写 .po；保留 po/zh_CN.po（已含 DeepL 翻译）
+          rm -f locale/zh_CN/LC_MESSAGES/tigervnc.po
+          ls -l locale/zh_CN/LC_MESSAGES/
+
+      - name: 校验新 .mo
+        if: steps.decide.outputs.need_update == 'true'
+        run: |
+          python scripts/validate_mo.py locale/zh_CN/LC_MESSAGES/tigervnc.mo
+
+      - name: 提交变更并打 tag
+        if: steps.decide.outputs.need_update == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore: 更新至 TigerVNC ${{ steps.official.outputs.official_ver }} 中文语言包" || echo "no changes to commit"
+          git tag "${{ steps.official.outputs.official_tag }}"
+          git push origin main
+          git push origin "${{ steps.official.outputs.official_tag }}"
+
+      - name: 打包 locale 目录（发布附件）
+        if: steps.decide.outputs.need_update == 'true'
+        run: |
+          mkdir -p _pkg/locale
+          cp -r locale/zh_CN _pkg/locale/
+          cd _pkg
+          zip -r "TigerVNC-zh_CN-${{ steps.official.outputs.official_ver }}-locale.zip" locale
+          ls -l
+
+      - name: 创建 release（仅含 locale 压缩包）
+        if: steps.decide.outputs.need_update == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "${{ steps.official.outputs.official_tag }}"
+          name: "TigerVNC ${{ steps.official.outputs.official_ver }} 简体中文语言包"
+          body: |
+            同步 TigerVNC 官方 v${{ steps.official.outputs.official_ver }} 的简体中文语言包。
+
+            解压后把 `locale` 文件夹放到 vncviewer64-*.exe 同目录即可汉化。
+          files: _pkg/TigerVNC-zh_CN-*.zip
