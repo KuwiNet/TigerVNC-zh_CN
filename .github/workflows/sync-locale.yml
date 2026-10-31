@@ -66,14 +66,21 @@ jobs:
           ls -l tigervnc_new.pot
           head -c 200 tigervnc_new.pot
 
-      - name: 安装 polib 并生成新 .mo
+      - name: 安装 polib 并自动翻译新增字符串
         if: steps.decide.outputs.need_update == 'true'
+        env:
+          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
         run: |
           pip install polib
-          python scripts/build_mo.py tigervnc_new.pot po/zh_CN.po locale/zh_CN/LC_MESSAGES/tigervnc.mo
-          # build_mo.py 还会在旁边写 .po；把它放回 po/zh_CN.po
-          mv locale/zh_CN/LC_MESSAGES/tigervnc.po po/zh_CN.po 2>/dev/null || true
+          python scripts/translate_missing.py tigervnc_new.pot po/zh_CN.po
           mv tigervnc_new.pot po/tigervnc.pot
+
+      - name: 生成新 .mo
+        if: steps.decide.outputs.need_update == 'true'
+        run: |
+          python scripts/build_mo.py po/tigervnc.pot po/zh_CN.po locale/zh_CN/LC_MESSAGES/tigervnc.mo
+          # build_mo.py 还会在旁边写 .po；保留 po/zh_CN.po（已含 DeepL 翻译）
+          rm -f locale/zh_CN/LC_MESSAGES/tigervnc.po
           ls -l locale/zh_CN/LC_MESSAGES/
 
       - name: 校验新 .mo
