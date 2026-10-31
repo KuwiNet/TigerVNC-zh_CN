@@ -1,0 +1,5 @@
+# 中间产物
+__pycache__/
+*.pyc
+_pkg/
+tigervnc_new.pot
